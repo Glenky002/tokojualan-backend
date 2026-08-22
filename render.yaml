@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: tokojualan-backend
+    env: python
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn toko_jualan.wsgi:application" # Ganti 'toko_jualan' dengan nama folder project settings Anda
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.12
