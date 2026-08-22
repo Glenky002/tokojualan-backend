@@ -6,10 +6,16 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import CustomTokenObtainPairSerializer
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.decorators import api_view, permission_classes, parser_classes
-from .models import UserProfile # Sesuaikan dengan model profil Anda
+from rest_framework.decorators import api_view, permission_classes, parser_classes,action
+from .models import UserProfile,CustomUser # Sesuaikan dengan model profil Anda,
+from rest_framework.pagination import PageNumberPagination
 
 User = get_user_model() # <--- MENDAPATKAN MODEL USER YANG AKTIF (CustomUser)
+
+
+class UserPagination(PageNumberPagination):
+    page_size = 10  # 2 data per halaman
+    page_size_query_param = 'page_size'
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -55,9 +61,37 @@ def promote_to_staff(request, user_id):
 @api_view(['GET'])
 @permission_classes([IsAdminUser])
 def list_users(request):
-    """Opsional: Mengambil daftar semua user agar admin bisa melihat siapa saja yang terdaftar"""
-    users = User.objects.all().values('id', 'username', 'email', 'is_staff')
-    return Response(list(users))
+    # Gunakan QuerySet model standar (jangan .values()) agar bisa diproses paginator & serializer dengan mulus
+    users = CustomUser.objects.all().order_by('-date_joined')
+    
+    paginator = UserPagination()
+    result_page = paginator.paginate_queryset(users, request)
+    
+    if result_page is not None:
+        # Jika kamu punya UserSerializer, gunakan ini:
+        # serializer = UserSerializer(result_page, many=True)
+        # return paginator.get_paginated_response(serializer.data)
+        
+        # ATAU jika ingin manual tanpa file Serializer terpisah tapi tetap ter-paginate:
+        data = [{
+            "id": u.id,
+            "username": u.username,
+            "email": u.email,
+            "is_staff": u.is_staff,
+            "is_active": u.is_active
+        } for u in result_page]
+        
+        return paginator.get_paginated_response(data)
+    
+    # Fallback jika paginasi tidak aktif
+    data = [{
+        "id": u.id,
+        "username": u.username,
+        "email": u.email,
+        "is_staff": u.is_staff,
+        "is_active": u.is_active
+    } for u in users]
+    return Response(data)
 
 @api_view(['GET', 'PUT']) # <--- 1. Pastikan 'PUT' ada di sini!
 @permission_classes([IsAuthenticated])
@@ -84,3 +118,58 @@ def get_user_profile(request):
             "message": "Foto profil berhasil diperbarui!",
             "avatar": request.build_absolute_uri(profile.avatar.url) if profile.avatar else None
         })
+
+@api_view(['DELETE'])
+@permission_classes([IsAdminUser])
+def delete_user(request, user_id):
+    """Menghapus akun pengguna berdasarkan ID (Hanya Admin)"""
+    try:
+        user = User.objects.get(id=user_id)
+        
+        # Mencegah admin menghapus akunnya sendiri secara tidak sengaja
+        if user == request.user:
+            return Response({"detail": "Anda tidak dapat menghapus akun Anda sendiri."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        user.delete()
+        return Response({"detail": "Pengguna berhasil dihapus."}, status=status.HTTP_200_OK)
+    except User.DoesNotExist:
+        return Response({"detail": "User tidak ditemukan."}, status=status.HTTP_404_NOT_FOUND)
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAdminUser])
+def admin_change_password(request, user_id):
+    """Mengubah password pengguna lain oleh Admin"""
+    try:
+        user = User.objects.get(id=user_id)
+        new_password = request.data.get('password')
+        
+        if not new_password or len(new_password) < 6:
+            return Response({"detail": "Password baru wajib diisi dan minimal 6 karakter."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        user.set_password(new_password)
+        user.save()
+        return Response({"detail": f"Password untuk {user.username} berhasil diubah."}, status=status.HTTP_200_OK)
+    except User.DoesNotExist:
+        return Response({"detail": "User tidak ditemukan."}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['PATCH'])
+@permission_classes([IsAdminUser])
+def toggle_user_status(request, user_id):
+    """Menonaktifkan (suspend) atau mengaktifkan kembali akun pengguna (Hanya Admin)"""
+    try:
+        user = User.objects.get(id=user_id)
+        
+        # Mencegah admin menonaktifkan akun sendiri
+        if user == request.user:
+            return Response({"detail": "Anda tidak dapat menonaktifkan akun Anda sendiri."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Balik status is_active (kalau True jadi False, kalau False jadi True)
+        user.is_active = not user.is_active
+        user.save()
+        
+        status_text = "diaktifkan" if user.is_active else "dinonaktifkan (suspend)"
+        return Response({"detail": f"Akun {user.username} berhasil {status_text}."}, status=status.HTTP_200_OK)
+    except User.DoesNotExist:
+        return Response({"detail": "User tidak ditemukan."}, status=status.HTTP_404_NOT_FOUND)
+
