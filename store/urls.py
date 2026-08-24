@@ -10,5 +10,5 @@ router.register(r'transactions', TransactionViewSet, basename='transaction')
 router.register(r'history', ProductHistoryViewSet, basename='product-history') # <-- Pastikan ini a
 
 urlpatterns = [
-    path('', include(router.urls)),
-]
+    # ... url lainnya ...
+] + router.urls
